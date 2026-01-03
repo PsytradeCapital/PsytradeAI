@@ -1,0 +1,65 @@
+# MetaTrader files
+*.ex4
+*.ex5
+*.log
+*.set
+
+# Compiled files
+*.obj
+*.exe
+*.dll
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Test results
+test_results/
+backtest_reports/
+
+# Personal configuration
+config.local.*
+settings.local.*
+
+# Logs
+logs/
+*.log
+
+# Cache
+cache/
+.cache/
+
+# Node modules (if any)
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Build directories
+build/
+dist/
