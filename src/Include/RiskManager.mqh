@@ -474,7 +474,7 @@ void CRiskManager::UpdateAccountInfo()
     m_accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
     m_accountEquity = AccountInfoDouble(ACCOUNT_EQUITY);
     m_accountMargin = AccountInfoDouble(ACCOUNT_MARGIN);
-    m_accountFreeMargin = AccountInfoDouble(ACCOUNT_FREEMARGIN);
+    m_accountFreeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
 }
 
 //+------------------------------------------------------------------+

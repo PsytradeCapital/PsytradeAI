@@ -11,6 +11,18 @@
 //+------------------------------------------------------------------+
 //| Structures                                                       |
 //+------------------------------------------------------------------+
+struct TradeRequest
+{
+    string symbol;
+    ENUM_ORDER_TYPE order_type;
+    double volume;
+    double price;
+    double stop_loss;
+    double take_profit;
+    string comment;
+    datetime expiration;
+};
+
 struct TradeSignal
 {
     string symbol;
@@ -125,7 +137,7 @@ public:
     
     // Position monitoring
     void UpdatePositionArray();
-    ActivePosition* GetPosition(ulong ticket);
+    ActivePosition GetPosition(ulong ticket);
     int GetOpenTradesCount();
     int GetOpenTradesCountBySymbol(string symbol);
     double GetTotalProfit();
@@ -338,7 +350,7 @@ void CTradeManager::MonitorPositions()
     
     for(int i = 0; i < ArraySize(m_positions); i++)
     {
-        ActivePosition* pos = &m_positions[i];
+        ActivePosition pos = m_positions[i];
         
         // Update current profit
         if(PositionSelectByTicket(pos.ticket))
@@ -498,9 +510,9 @@ bool CTradeManager::CloseAllPositions(string reason)
     }
     
     // Cancel all pending orders with our magic number
-    for(int i = OrdersTotal() - 1; i >= 0; i--)
+    for(int j = OrdersTotal() - 1; j >= 0; j--)
     {
-        if(OrderSelectByIndex(i))
+        if(OrderSelectByIndex(j))
         {
             if(OrderGetInteger(ORDER_MAGIC) == m_magicNumber)
             {
@@ -578,3 +590,288 @@ int CTradeManager::GetOpenTradesCount()
 }
 
 //--- Additional trade management methods continue...
+
+//+------------------------------------------------------------------+
+//| Validate trade execution                                        |
+//+------------------------------------------------------------------+
+bool CTradeManager::ValidateTradeExecution(const TradeRequest& request)
+{
+    // Basic validation
+    if(request.volume <= 0)
+    {
+        Print("[TradeManager] Invalid volume: " + DoubleToString(request.volume, 2));
+        return false;
+    }
+    
+    if(request.symbol == "")
+    {
+        Print("[TradeManager] Empty symbol");
+        return false;
+    }
+    
+    // Check if symbol exists and is tradeable
+    if(!SymbolSelect(request.symbol, true))
+    {
+        Print("[TradeManager] Symbol not available: " + request.symbol);
+        return false;
+    }
+    
+    // Check minimum risk-reward ratio
+    if(request.stop_loss != 0 && request.take_profit != 0)
+    {
+        double risk = MathAbs(request.price - request.stop_loss);
+        double reward = MathAbs(request.take_profit - request.price);
+        
+        if(risk > 0)
+        {
+            double riskReward = reward / risk;
+            if(riskReward < m_minRiskReward)
+            {
+                Print("[TradeManager] Risk-reward ratio too low: " + DoubleToString(riskReward, 2) + 
+                      " (minimum: " + DoubleToString(m_minRiskReward, 2) + ")");
+                return false;
+            }
+        }
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Retry trade execution                                           |
+//+------------------------------------------------------------------+
+bool CTradeManager::RetryTradeExecution(const TradeRequest& request, int maxRetries)
+{
+    for(int retry = 0; retry < maxRetries; retry++)
+    {
+        Sleep(100); // Wait 100ms between retries
+        
+        // Get fresh prices
+        double currentAsk = SymbolInfoDouble(request.symbol, SYMBOL_ASK);
+        double currentBid = SymbolInfoDouble(request.symbol, SYMBOL_BID);
+        
+        TradeRequest retryRequest = request;
+        
+        // Update price based on order type
+        if(request.order_type == ORDER_TYPE_BUY)
+        {
+            retryRequest.price = currentAsk;
+        }
+        else if(request.order_type == ORDER_TYPE_SELL)
+        {
+            retryRequest.price = currentBid;
+        }
+        
+        // Try execution again
+        bool success = false;
+        switch(retryRequest.order_type)
+        {
+            case ORDER_TYPE_BUY:
+                success = m_trade.Buy(retryRequest.volume, retryRequest.symbol, retryRequest.price,
+                                    retryRequest.stop_loss, retryRequest.take_profit, retryRequest.comment);
+                break;
+                
+            case ORDER_TYPE_SELL:
+                success = m_trade.Sell(retryRequest.volume, retryRequest.symbol, retryRequest.price,
+                                     retryRequest.stop_loss, retryRequest.take_profit, retryRequest.comment);
+                break;
+        }
+        
+        if(success)
+        {
+            Print("[TradeManager] Trade executed on retry " + IntegerToString(retry + 1));
+            return true;
+        }
+    }
+    
+    Print("[TradeManager] All retry attempts failed");
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Log trade execution                                             |
+//+------------------------------------------------------------------+
+void CTradeManager::LogTradeExecution(const TradeRequest& request, bool success, string error = "")
+{
+    string logMessage = "[TradeManager] Trade " + (success ? "SUCCESS" : "FAILED") + 
+                       " - Symbol: " + request.symbol + 
+                       ", Type: " + EnumToString(request.order_type) + 
+                       ", Volume: " + DoubleToString(request.volume, 2) + 
+                       ", Price: " + DoubleToString(request.price, _Digits);
+    
+    if(!success && error != "")
+    {
+        logMessage += ", Error: " + error;
+    }
+    
+    Print(logMessage);
+}
+
+//+------------------------------------------------------------------+
+//| Check if market is open                                         |
+//+------------------------------------------------------------------+
+bool CTradeManager::IsMarketOpen(string symbol)
+{
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    
+    // Basic check - avoid weekends
+    if(dt.day_of_week == 0 || dt.day_of_week == 6)
+    {
+        return false;
+    }
+    
+    // Check trading sessions (simplified)
+    int hour = dt.hour;
+    if(hour >= 0 && hour <= 23) // 24/7 for now, can be refined per symbol
+    {
+        return true;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Normalize price to symbol digits                               |
+//+------------------------------------------------------------------+
+double CTradeManager::NormalizePrice(string symbol, double price)
+{
+    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+    return NormalizeDouble(price, digits);
+}
+
+//+------------------------------------------------------------------+
+//| Normalize lot size to symbol step                              |
+//+------------------------------------------------------------------+
+double CTradeManager::NormalizeLots(string symbol, double lots)
+{
+    double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+    double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+    
+    lots = MathFloor(lots / lotStep) * lotStep;
+    lots = MathMax(minLot, MathMin(lots, maxLot));
+    
+    return lots;
+}
+
+//+------------------------------------------------------------------+
+//| Send trade alert                                               |
+//+------------------------------------------------------------------+
+void CTradeManager::SendTradeAlert(string message)
+{
+    // Send alert notification
+    Alert("[PsyTradeAI] " + message);
+    
+    // Could also send push notifications, emails, etc.
+    // SendNotification(message);
+    // SendMail("PsyTradeAI Alert", message);
+}
+
+//+------------------------------------------------------------------+
+//| Check margin requirement                                        |
+//+------------------------------------------------------------------+
+bool CTradeManager::CheckMarginRequirement(string symbol, double volume)
+{
+    double marginRequired = 0;
+    
+    // Calculate required margin
+    if(!OrderCalcMargin(ORDER_TYPE_BUY, symbol, volume, 
+                       SymbolInfoDouble(symbol, SYMBOL_ASK), marginRequired))
+    {
+        Print("[TradeManager] Failed to calculate margin for " + symbol);
+        return false;
+    }
+    
+    double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+    
+    if(marginRequired > freeMargin)
+    {
+        Print("[TradeManager] Insufficient margin - Required: " + DoubleToString(marginRequired, 2) + 
+              ", Available: " + DoubleToString(freeMargin, 2));
+        return false;
+    }
+    
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Partial close position                                          |
+//+------------------------------------------------------------------+
+bool CTradeManager::PartialClose(ulong ticket, double percentage)
+{
+    if(!PositionSelectByTicket(ticket))
+        return false;
+    
+    double currentVolume = PositionGetDouble(POSITION_VOLUME);
+    double closeVolume = currentVolume * (percentage / 100.0);
+    
+    // Normalize the close volume
+    string symbol = PositionGetString(POSITION_SYMBOL);
+    closeVolume = NormalizeLots(symbol, closeVolume);
+    
+    if(closeVolume <= 0)
+        return false;
+    
+    if(m_trade.PositionClosePartial(ticket, closeVolume))
+    {
+        Print("[TradeManager] Partial close executed - Ticket: " + IntegerToString(ticket) + 
+              ", Closed: " + DoubleToString(closeVolume, 2) + " lots (" + 
+              DoubleToString(percentage, 1) + "%)");
+        return true;
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Trail stop loss                                                |
+//+------------------------------------------------------------------+
+bool CTradeManager::TrailStop(ulong ticket, double trailDistance)
+{
+    if(!PositionSelectByTicket(ticket))
+        return false;
+    
+    string symbol = PositionGetString(POSITION_SYMBOL);
+    ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+    double currentPrice = (posType == POSITION_TYPE_BUY) ? 
+                         SymbolInfoDouble(symbol, SYMBOL_BID) : 
+                         SymbolInfoDouble(symbol, SYMBOL_ASK);
+    double currentSL = PositionGetDouble(POSITION_SL);
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    
+    double newSL = 0;
+    bool shouldUpdate = false;
+    
+    if(posType == POSITION_TYPE_BUY)
+    {
+        newSL = currentPrice - (trailDistance * point);
+        if(newSL > currentSL)
+        {
+            shouldUpdate = true;
+        }
+    }
+    else // POSITION_TYPE_SELL
+    {
+        newSL = currentPrice + (trailDistance * point);
+        if(newSL < currentSL || currentSL == 0)
+        {
+            shouldUpdate = true;
+        }
+    }
+    
+    if(shouldUpdate)
+    {
+        newSL = NormalizePrice(symbol, newSL);
+        double currentTP = PositionGetDouble(POSITION_TP);
+        
+        if(m_trade.PositionModify(ticket, newSL, currentTP))
+        {
+            Print("[TradeManager] Trailing stop updated - Ticket: " + IntegerToString(ticket) + 
+                  ", New SL: " + DoubleToString(newSL, _Digits));
+            return true;
+        }
+    }
+    
+    return false;
+}
