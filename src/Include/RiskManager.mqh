@@ -6,6 +6,9 @@
 #property copyright "Copyright 2026, PsyTradeAI Ltd"
 #property link      "https://www.psytradeai.com"
 
+// Forward declarations
+struct TradeRequest;
+
 //+------------------------------------------------------------------+
 //| Structures                                                       |
 //+------------------------------------------------------------------+
@@ -27,19 +30,7 @@ struct RiskMetrics
     datetime last_risk_update;
 };
 
-struct TradeRequest
-{
-    string symbol;
-    ENUM_ORDER_TYPE order_type;
-    double volume;
-    double price;
-    double stop_loss;
-    double take_profit;
-    string comment;
-    int magic_number;
-    double risk_amount;
-    double risk_reward_ratio;
-};
+// TradeRequest is defined in TradeManager.mqh - using that definition
 
 struct PositionRisk
 {
@@ -142,6 +133,7 @@ private:
     double GetSymbolTickValue(string symbol);
     double GetSymbolTickSize(string symbol);
     double GetSymbolContractSize(string symbol);
+    void CalculateRealizedPnLToday();
 };
 
 //+------------------------------------------------------------------+
@@ -225,7 +217,8 @@ void CRiskManager::UpdateRiskMetrics()
     m_metrics.unrealized_pnl = 0;
     for(int i = 0; i < PositionsTotal(); i++)
     {
-        if(PositionSelectByIndex(i))
+        ulong posTicket = PositionGetTicket(i);
+        if(posTicket > 0 && PositionSelectByTicket(posTicket))
         {
             m_metrics.unrealized_pnl += PositionGetDouble(POSITION_PROFIT);
         }
@@ -274,7 +267,9 @@ bool CRiskManager::ValidateTrade(TradeRequest& request)
     // Check risk-reward ratio
     double reward = MathAbs(request.take_profit - request.price);
     double risk = MathAbs(request.stop_loss - request.price);
-    double rrRatio = (risk > 0) ? reward / risk : 0;
+    double rrRatio = 0.0;
+    if(risk > 0)
+        rrRatio = reward / risk;
     
     if(rrRatio < request.risk_reward_ratio)
     {
@@ -495,4 +490,138 @@ double CRiskManager::GetSymbolContractSize(string symbol)
     return SymbolInfoDouble(symbol, SYMBOL_TRADE_CONTRACT_SIZE);
 }
 
+//+------------------------------------------------------------------+
+//| Calculate realized P&L for today                               |
+//+------------------------------------------------------------------+
+void CRiskManager::CalculateRealizedPnLToday()
+{
+    m_metrics.realized_pnl_today = 0.0;
+    
+    // Get today's date
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    dt.hour = 0;
+    dt.min = 0;
+    dt.sec = 0;
+    datetime todayStart = StructToTime(dt);
+    
+    // Calculate realized P&L from closed positions today
+    if(HistorySelect(todayStart, TimeCurrent()))
+    {
+        int totalDeals = HistoryDealsTotal();
+        for(int i = 0; i < totalDeals; i++)
+        {
+            ulong ticket = HistoryDealGetTicket(i);
+            if(ticket > 0)
+            {
+                ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(ticket, DEAL_TYPE);
+                if(dealType == DEAL_TYPE_BUY || dealType == DEAL_TYPE_SELL)
+                {
+                    double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+                    double commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+                    double swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
+                    
+                    m_metrics.realized_pnl_today += (profit + commission + swap);
+                }
+            }
+        }
+    }
+}
+
 //--- Additional risk management methods continue...
+
+//+------------------------------------------------------------------+
+//| Calculate correlation risk                                       |
+//+------------------------------------------------------------------+
+double CRiskManager::CalculateCorrelationRisk()
+{
+    // Simple correlation risk calculation
+    // In a full implementation, this would analyze currency correlations
+    return 0.0; // Return 0 for now to allow trading
+}
+
+//+------------------------------------------------------------------+
+//| Calculate portfolio risk                                        |
+//+------------------------------------------------------------------+
+double CRiskManager::CalculatePortfolioRisk()
+{
+    double totalRisk = 0.0;
+    
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong posTicket = PositionGetTicket(i);
+        if(posTicket > 0 && PositionSelectByTicket(posTicket))
+        {
+            double positionRisk = MathAbs(PositionGetDouble(POSITION_PROFIT));
+            totalRisk += positionRisk;
+        }
+    }
+    
+    return totalRisk;
+}
+
+//+------------------------------------------------------------------+
+//| Update position risk                                            |
+//+------------------------------------------------------------------+
+void CRiskManager::UpdatePositionRisk()
+{
+    // Update position risk array
+    ArrayResize(m_positions, 0);
+    
+    for(int i = 0; i < PositionsTotal(); i++)
+    {
+        ulong posTicket = PositionGetTicket(i);
+        if(posTicket > 0 && PositionSelectByTicket(posTicket))
+        {
+            PositionRisk posRisk;
+            posRisk.ticket = posTicket;
+            posRisk.symbol = PositionGetString(POSITION_SYMBOL);
+            posRisk.volume = PositionGetDouble(POSITION_VOLUME);
+            posRisk.open_price = PositionGetDouble(POSITION_PRICE_OPEN);
+            posRisk.stop_loss = PositionGetDouble(POSITION_SL);
+            posRisk.take_profit = PositionGetDouble(POSITION_TP);
+            posRisk.unrealized_pnl = PositionGetDouble(POSITION_PROFIT);
+            posRisk.risk_amount = MathAbs(posRisk.unrealized_pnl);
+            posRisk.max_risk_per_position = (m_accountEquity * m_riskPerTrade) / 100.0;
+            posRisk.is_correlated = false;
+            
+            ArrayResize(m_positions, ArraySize(m_positions) + 1);
+            m_positions[ArraySize(m_positions) - 1] = posRisk;
+        }
+    }
+}
+//+------------------------------------------------------------------+
+//| Get maximum position size for symbol                           |
+//+------------------------------------------------------------------+
+double CRiskManager::GetMaxPositionSize(string symbol)
+{
+    // Calculate maximum position size based on risk per trade
+    double maxRiskAmount = (m_accountEquity * m_riskPerTrade) / 100.0;
+    
+    // Get symbol specifications
+    double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+    double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+    
+    // For now, return a conservative maximum based on account size
+    double maxSize = MathMin(maxLot, maxRiskAmount / 1000.0); // Simple calculation
+    
+    // Round to lot step
+    maxSize = MathFloor(maxSize / lotStep) * lotStep;
+    
+    return MathMax(minLot, maxSize);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate risk amount                                           |
+//+------------------------------------------------------------------+
+double CRiskManager::CalculateRiskAmount(double positionSize, double entryPrice, double stopLoss)
+{
+    if(positionSize <= 0 || entryPrice <= 0 || stopLoss <= 0)
+        return 0.0;
+    
+    double pipRisk = MathAbs(entryPrice - stopLoss);
+    double tickValue = 10.0; // Simplified - should get from symbol info
+    
+    return positionSize * pipRisk * tickValue;
+}

@@ -6,6 +6,29 @@
 #property copyright "Copyright 2026, PsyTradeAI Ltd"
 #property link      "https://www.psytradeai.com"
 
+// Forward declarations
+struct TradeRequest;
+
+//+------------------------------------------------------------------+
+//| Forward Declarations and Structures                             |
+//+------------------------------------------------------------------+
+// TradeRequest is defined in TradeManager.mqh - using that definition
+
+enum ENUM_VIOLATION_SEVERITY
+{
+    VIOLATION_INFO,
+    VIOLATION_WARNING,
+    VIOLATION_CRITICAL
+};
+
+struct ViolationRecord
+{
+    string type;
+    string description;
+    datetime timestamp;
+    ENUM_VIOLATION_SEVERITY severity;
+};
+
 //+------------------------------------------------------------------+
 //| Enumerations                                                     |
 //+------------------------------------------------------------------+
@@ -95,8 +118,18 @@ private:
     datetime m_phaseStartTime;
     
     // Violation tracking
-    string m_violations[];
-    datetime m_violationTimes[];
+    ViolationRecord m_violations[];
+    int m_violationCount;
+    bool m_accountSuspended;
+    bool m_alertsEnabled;
+    
+    // Daily tracking variables
+    double m_dailyPnL;
+    double m_dailyDrawdown;
+    double m_overallDrawdown;
+    double m_dailyPeakBalance;
+    double m_peakBalance;
+    int m_tradesToday;
     
     // Trading session tracking
     bool m_isWeekend;
@@ -146,6 +179,10 @@ public:
     double GetRemainingDrawdown();
     double GetRequiredProfit();
     int GetRemainingTradingDays();
+    bool IsAccountSuspended();
+    string GetViolationReport();
+    void SetAlertsEnabled(bool enabled);
+    void UpdateDailyStats();
     
 private:
     // Helper functions
@@ -184,8 +221,20 @@ CPropFirmManager::CPropFirmManager()
     m_isNewsTime = false;
     m_lastNewsCheck = 0;
     
+    // Initialize violation tracking
+    m_violationCount = 0;
+    m_accountSuspended = false;
+    m_alertsEnabled = true;
+    
+    // Initialize daily tracking
+    m_dailyPnL = 0.0;
+    m_dailyDrawdown = 0.0;
+    m_overallDrawdown = 0.0;
+    m_dailyPeakBalance = 0.0;
+    m_peakBalance = 0.0;
+    m_tradesToday = 0;
+    
     ArrayResize(m_violations, 0);
-    ArrayResize(m_violationTimes, 0);
 }
 
 //+------------------------------------------------------------------+
@@ -477,6 +526,102 @@ void CPropFirmManager::SetFundedNextRules()
 }
 
 //+------------------------------------------------------------------+
+//| Set GoatFunded specific rules                                   |
+//+------------------------------------------------------------------+
+void CPropFirmManager::SetGoatFundedRules()
+{
+    m_rules.firm_name = "GoatFunded";
+    m_rules.daily_drawdown_limit = 5.0;
+    m_rules.overall_drawdown_limit = 10.0;
+    m_rules.profit_target_phase1 = 8.0;
+    m_rules.profit_target_phase2 = 5.0;
+    m_rules.min_trading_days = 4;
+    m_rules.max_trading_days = 30;
+    m_rules.weekend_trading_allowed = false;
+    m_rules.news_trading_allowed = true;
+    m_rules.min_holding_time = 60;
+    m_rules.max_holding_time = 0;
+    m_rules.max_lot_size = 1.5;
+    m_rules.max_daily_loss = 0;
+    m_rules.requires_consistency = true;
+    m_rules.allows_ea_trading = true;
+    m_rules.allows_copy_trading = false;
+    m_rules.max_open_positions = 8;
+}
+
+//+------------------------------------------------------------------+
+//| Set EquityEdge specific rules                                   |
+//+------------------------------------------------------------------+
+void CPropFirmManager::SetEquityEdgeRules()
+{
+    m_rules.firm_name = "EquityEdge";
+    m_rules.daily_drawdown_limit = 4.0;
+    m_rules.overall_drawdown_limit = 8.0;
+    m_rules.profit_target_phase1 = 10.0;
+    m_rules.profit_target_phase2 = 5.0;
+    m_rules.min_trading_days = 5;
+    m_rules.max_trading_days = 30;
+    m_rules.weekend_trading_allowed = false;
+    m_rules.news_trading_allowed = false;
+    m_rules.min_holding_time = 120;
+    m_rules.max_holding_time = 0;
+    m_rules.max_lot_size = 1.0;
+    m_rules.max_daily_loss = 0;
+    m_rules.requires_consistency = true;
+    m_rules.allows_ea_trading = true;
+    m_rules.allows_copy_trading = false;
+    m_rules.max_open_positions = 5;
+}
+
+//+------------------------------------------------------------------+
+//| Set MyForexFunds specific rules                                 |
+//+------------------------------------------------------------------+
+void CPropFirmManager::SetMyForexFundsRules()
+{
+    m_rules.firm_name = "MyForexFunds";
+    m_rules.daily_drawdown_limit = 5.0;
+    m_rules.overall_drawdown_limit = 12.0;
+    m_rules.profit_target_phase1 = 8.0;
+    m_rules.profit_target_phase2 = 5.0;
+    m_rules.min_trading_days = 4;
+    m_rules.max_trading_days = 30;
+    m_rules.weekend_trading_allowed = true;
+    m_rules.news_trading_allowed = true;
+    m_rules.min_holding_time = 60;
+    m_rules.max_holding_time = 0;
+    m_rules.max_lot_size = 2.0;
+    m_rules.max_daily_loss = 0;
+    m_rules.requires_consistency = false;
+    m_rules.allows_ea_trading = true;
+    m_rules.allows_copy_trading = true;
+    m_rules.max_open_positions = 10;
+}
+
+//+------------------------------------------------------------------+
+//| Set The5%ers specific rules                                     |
+//+------------------------------------------------------------------+
+void CPropFirmManager::SetThe5ersRules()
+{
+    m_rules.firm_name = "The5%ers";
+    m_rules.daily_drawdown_limit = 5.0;
+    m_rules.overall_drawdown_limit = 10.0;
+    m_rules.profit_target_phase1 = 8.0;
+    m_rules.profit_target_phase2 = 5.0;
+    m_rules.min_trading_days = 4;
+    m_rules.max_trading_days = 30;
+    m_rules.weekend_trading_allowed = false;
+    m_rules.news_trading_allowed = true;
+    m_rules.min_holding_time = 60;
+    m_rules.max_holding_time = 0;
+    m_rules.max_lot_size = 1.0;
+    m_rules.max_daily_loss = 0;
+    m_rules.requires_consistency = true;
+    m_rules.allows_ea_trading = true;
+    m_rules.allows_copy_trading = false;
+    m_rules.max_open_positions = 6;
+}
+
+//+------------------------------------------------------------------+
 //| Monitor drawdown limits                                         |
 //+------------------------------------------------------------------+
 void CPropFirmManager::MonitorDrawdownLimits()
@@ -512,6 +657,260 @@ void CPropFirmManager::MonitorDrawdownLimits()
 }
 
 //+------------------------------------------------------------------+
+//| Get phase name as string                                        |
+//+------------------------------------------------------------------+
+string CPropFirmManager::GetPhaseName()
+{
+    switch(m_currentPhase)
+    {
+        case PHASE_CHALLENGE_1: return "Challenge Phase 1";
+        case PHASE_CHALLENGE_2: return "Challenge Phase 2";
+        case PHASE_VERIFICATION: return "Verification";
+        case PHASE_LIVE_FUNDED: return "Live Funded";
+        default: return "Unknown";
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Detect account phase                                            |
+//+------------------------------------------------------------------+
+ENUM_ACCOUNT_PHASE CPropFirmManager::DetectAccountPhase()
+{
+    // Simple detection based on account balance and profit
+    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double profit = currentBalance - m_startingBalance;
+    double profitPercent = (profit / m_startingBalance) * 100.0;
+    
+    // This is a simplified detection - in reality, you'd need more sophisticated logic
+    if(profitPercent >= m_rules.profit_target_phase1)
+        return PHASE_CHALLENGE_2;
+    else if(profitPercent >= m_rules.profit_target_phase2)
+        return PHASE_VERIFICATION;
+    else
+        return PHASE_CHALLENGE_1;
+}
+
+//+------------------------------------------------------------------+
+//| Check phase completion                                          |
+//+------------------------------------------------------------------+
+bool CPropFirmManager::CheckPhaseCompletion()
+{
+    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double profit = currentBalance - m_phaseStartingBalance;
+    double profitPercent = (profit / m_phaseStartingBalance) * 100.0;
+    
+    switch(m_currentPhase)
+    {
+        case PHASE_CHALLENGE_1:
+            return profitPercent >= m_rules.profit_target_phase1;
+        case PHASE_CHALLENGE_2:
+            return profitPercent >= m_rules.profit_target_phase2;
+        case PHASE_VERIFICATION:
+            return true; // Verification phase completion logic
+        default:
+            return false;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Transition to next phase                                        |
+//+------------------------------------------------------------------+
+void CPropFirmManager::TransitionToNextPhase()
+{
+    switch(m_currentPhase)
+    {
+        case PHASE_CHALLENGE_1:
+            m_currentPhase = PHASE_CHALLENGE_2;
+            break;
+        case PHASE_CHALLENGE_2:
+            m_currentPhase = PHASE_VERIFICATION;
+            break;
+        case PHASE_VERIFICATION:
+            m_currentPhase = PHASE_LIVE_FUNDED;
+            break;
+        default:
+            break;
+    }
+    
+    // Reset phase metrics
+    m_phaseStartingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    m_phaseStartTime = TimeCurrent();
+    
+    Print("[PropFirmManager] Transitioned to " + GetPhaseName());
+}
+
+//+------------------------------------------------------------------+
+//| Monitor profit targets                                          |
+//+------------------------------------------------------------------+
+void CPropFirmManager::MonitorProfitTargets()
+{
+    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double profit = currentBalance - m_phaseStartingBalance;
+    double profitPercent = (profit / m_phaseStartingBalance) * 100.0;
+    
+    m_metrics.current_profit = profitPercent;
+    
+    switch(m_currentPhase)
+    {
+        case PHASE_CHALLENGE_1:
+            m_metrics.overall_profit_target = m_rules.profit_target_phase1;
+            break;
+        case PHASE_CHALLENGE_2:
+            m_metrics.overall_profit_target = m_rules.profit_target_phase2;
+            break;
+        default:
+            m_metrics.overall_profit_target = 0;
+            break;
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Monitor trading days                                            |
+//+------------------------------------------------------------------+
+void CPropFirmManager::MonitorTradingDays()
+{
+    // Calculate trading days since phase start
+    int daysSinceStart = (int)((TimeCurrent() - m_phaseStartTime) / 86400);
+    m_metrics.trading_days_count = daysSinceStart;
+    
+    // Check minimum trading days requirement
+    if(m_currentPhase != PHASE_LIVE_FUNDED && daysSinceStart < m_rules.min_trading_days)
+    {
+        // Still need more trading days
+    }
+    
+    // Check maximum trading days limit
+    if(daysSinceStart > m_rules.max_trading_days)
+    {
+        RecordViolation("MaxTradingDaysViolation", 
+                       "Maximum trading days (" + IntegerToString(m_rules.max_trading_days) + ") exceeded");
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Monitor holding times                                           |
+//+------------------------------------------------------------------+
+void CPropFirmManager::MonitorHoldingTimes(ulong ticket, datetime openTime, datetime closeTime)
+{
+    int holdingTimeSeconds = (int)(closeTime - openTime);
+    
+    if(holdingTimeSeconds < m_rules.min_holding_time)
+    {
+        RecordViolation("MinHoldingTimeViolation", 
+                       "Trade held for " + IntegerToString(holdingTimeSeconds) + 
+                       " seconds, minimum is " + IntegerToString(m_rules.min_holding_time));
+    }
+    
+    if(m_rules.max_holding_time > 0 && holdingTimeSeconds > m_rules.max_holding_time)
+    {
+        RecordViolation("MaxHoldingTimeViolation", 
+                       "Trade held for " + IntegerToString(holdingTimeSeconds) + 
+                       " seconds, maximum is " + IntegerToString(m_rules.max_holding_time));
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check weekend trading status                                    |
+//+------------------------------------------------------------------+
+void CPropFirmManager::CheckWeekendStatus()
+{
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    
+    // Weekend is Saturday (6) and Sunday (0)
+    m_isWeekend = (dt.day_of_week == 0 || dt.day_of_week == 6);
+}
+
+//+------------------------------------------------------------------+
+//| Check news trading status                                       |
+//+------------------------------------------------------------------+
+void CPropFirmManager::CheckNewsStatus()
+{
+    // Simple news detection - in practice, you'd integrate with news calendar
+    // For now, assume news time during certain hours
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    
+    // Assume high-impact news during 8:30-9:30 EST (13:30-14:30 GMT)
+    m_isNewsTime = (dt.hour >= 13 && dt.hour <= 14);
+}
+
+//+------------------------------------------------------------------+
+//| Check if weekend trading is allowed                            |
+//+------------------------------------------------------------------+
+bool CPropFirmManager::IsWeekendTradingAllowed()
+{
+    return m_rules.weekend_trading_allowed;
+}
+
+//+------------------------------------------------------------------+
+//| Check if news trading is allowed                               |
+//+------------------------------------------------------------------+
+bool CPropFirmManager::IsNewsTradingAllowed()
+{
+    return m_rules.news_trading_allowed;
+}
+
+//+------------------------------------------------------------------+
+//| Set account phase                                               |
+//+------------------------------------------------------------------+
+void CPropFirmManager::SetAccountPhase(ENUM_ACCOUNT_PHASE phase)
+{
+    m_currentPhase = phase;
+    m_phaseStartingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    m_phaseStartTime = TimeCurrent();
+    
+    Print("[PropFirmManager] Account phase set to: " + GetPhaseName());
+}
+
+//+------------------------------------------------------------------+
+//| Get remaining drawdown                                          |
+//+------------------------------------------------------------------+
+double CPropFirmManager::GetRemainingDrawdown()
+{
+    return m_rules.daily_drawdown_limit - m_metrics.current_daily_dd;
+}
+
+//+------------------------------------------------------------------+
+//| Get required profit                                             |
+//+------------------------------------------------------------------+
+double CPropFirmManager::GetRequiredProfit()
+{
+    return m_metrics.overall_profit_target - m_metrics.current_profit;
+}
+
+//+------------------------------------------------------------------+
+//| Get remaining trading days                                      |
+//+------------------------------------------------------------------+
+int CPropFirmManager::GetRemainingTradingDays()
+{
+    return m_rules.max_trading_days - m_metrics.trading_days_count;
+}
+
+//+------------------------------------------------------------------+
+//| Update daily metrics                                            |
+//+------------------------------------------------------------------+
+void CPropFirmManager::UpdateDailyMetrics()
+{
+    // Check if it's a new day
+    static datetime lastUpdateDay = 0;
+    datetime currentDay = (TimeCurrent() / 86400) * 86400; // Start of current day
+    
+    if(lastUpdateDay != currentDay)
+    {
+        // New day - reset daily metrics
+        m_dailyStartingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+        m_dailyPeakBalance = m_dailyStartingBalance;
+        lastUpdateDay = currentDay;
+        
+        Print("[PropFirmManager] New trading day - Daily balance reset to: " + 
+              DoubleToString(m_dailyStartingBalance, 2));
+    }
+    
+    UpdateDailyStats();
+}
+
+//+------------------------------------------------------------------+
 //| Get firm name as string                                         |
 //+------------------------------------------------------------------+
 string CPropFirmManager::GetFirmName()
@@ -532,3 +931,165 @@ string CPropFirmManager::GetFirmName()
 }
 
 //--- Additional prop firm management methods continue...
+//+------------------------------------------------------------------+
+//| Record violation                                                |
+//+------------------------------------------------------------------+
+void CPropFirmManager::RecordViolation(string violationType, string description)
+{
+    // Add to violations array
+    int size = ArraySize(m_violations);
+    ArrayResize(m_violations, size + 1);
+    
+    m_violations[size].type = violationType;
+    m_violations[size].description = description;
+    m_violations[size].timestamp = TimeCurrent();
+    m_violations[size].severity = VIOLATION_WARNING; // Default severity
+    
+    // Log the violation
+    Print("[PropFirmManager] VIOLATION: " + violationType + " - " + description);
+    
+    // Send alert if enabled
+    if(m_alertsEnabled)
+    {
+        Alert("PropFirm Violation: " + violationType + " - " + description);
+    }
+    
+    // Update violation count
+    m_violationCount++;
+    
+    // Check if account should be suspended
+    if(m_violationCount >= 5) // Suspend after 5 violations
+    {
+        m_accountSuspended = true;
+        Print("[PropFirmManager] ACCOUNT SUSPENDED due to multiple violations");
+        Alert("ACCOUNT SUSPENDED: Multiple prop firm rule violations detected");
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check for recent violations                                     |
+//+------------------------------------------------------------------+
+bool CPropFirmManager::HasRecentViolations(int minutes = 60)
+{
+    datetime cutoffTime = TimeCurrent() - (minutes * 60);
+    
+    int recent_i;
+    for(recent_i = 0; recent_i < ArraySize(m_violations); recent_i++)
+    {
+        if(m_violations[recent_i].timestamp > cutoffTime)
+        {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Reset violations                                                |
+//+------------------------------------------------------------------+
+void CPropFirmManager::ResetViolations()
+{
+    ArrayResize(m_violations, 0);
+    m_violationCount = 0;
+    m_accountSuspended = false;
+    
+    Print("[PropFirmManager] Violations reset");
+}
+
+//+------------------------------------------------------------------+
+//| Update daily statistics                                         |
+//+------------------------------------------------------------------+
+void CPropFirmManager::UpdateDailyStats()
+{
+    // Update daily P&L
+    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    m_dailyPnL = currentEquity - m_dailyStartingBalance;
+    
+    // Update daily drawdown
+    if(currentEquity < m_dailyPeakBalance)
+    {
+        m_dailyDrawdown = (m_dailyPeakBalance - currentEquity) / m_dailyStartingBalance * 100.0;
+    }
+    else
+    {
+        m_dailyPeakBalance = currentEquity;
+        m_dailyDrawdown = 0.0;
+    }
+    
+    // Update overall drawdown
+    if(currentEquity < m_peakBalance)
+    {
+        m_overallDrawdown = (m_peakBalance - currentEquity) / m_startingBalance * 100.0;
+    }
+    else
+    {
+        m_peakBalance = currentEquity;
+        m_overallDrawdown = 0.0;
+    }
+    
+    // Check for new trading day
+    MqlDateTime dt;
+    TimeToStruct(TimeCurrent(), dt);
+    static int lastDay = -1;
+    
+    if(lastDay != -1 && dt.day != lastDay)
+    {
+        // New day started - reset daily metrics
+        m_dailyStartingBalance = currentEquity;
+        m_dailyPeakBalance = currentEquity;
+        m_dailyPnL = 0.0;
+        m_dailyDrawdown = 0.0;
+        m_tradesToday = 0;
+        
+        Print("[PropFirmManager] New trading day - Daily metrics reset");
+    }
+    lastDay = dt.day;
+}
+
+//+------------------------------------------------------------------+
+//| Check if account is suspended                                   |
+//+------------------------------------------------------------------+
+bool CPropFirmManager::IsAccountSuspended()
+{
+    return m_accountSuspended;
+}
+
+//+------------------------------------------------------------------+
+//| Get violation report                                            |
+//+------------------------------------------------------------------+
+string CPropFirmManager::GetViolationReport()
+{
+    string report = "=== PROP FIRM VIOLATION REPORT ===\n";
+    report += "Firm: " + GetFirmName() + "\n";
+    report += "Phase: " + EnumToString(m_currentPhase) + "\n";
+    report += "Total Violations: " + IntegerToString(m_violationCount) + "\n";
+    report += "Account Status: " + (m_accountSuspended ? "SUSPENDED" : "ACTIVE") + "\n\n";
+    
+    if(ArraySize(m_violations) > 0)
+    {
+        report += "RECENT VIOLATIONS:\n";
+        int viol_i;
+        for(viol_i = 0; viol_i < ArraySize(m_violations); viol_i++)
+        {
+            report += TimeToString(m_violations[viol_i].timestamp) + " - ";
+            report += m_violations[viol_i].type + ": ";
+            report += m_violations[viol_i].description + "\n";
+        }
+    }
+    else
+    {
+        report += "No violations recorded.\n";
+    }
+    
+    return report;
+}
+
+//+------------------------------------------------------------------+
+//| Enable/disable alerts                                           |
+//+------------------------------------------------------------------+
+void CPropFirmManager::SetAlertsEnabled(bool enabled)
+{
+    m_alertsEnabled = enabled;
+    Print("[PropFirmManager] Alerts " + (enabled ? "enabled" : "disabled"));
+}

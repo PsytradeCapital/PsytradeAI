@@ -491,19 +491,19 @@ bool CTradeManager::CloseAllPositions(string reason)
     // Close all positions with our magic number
     for(int i = PositionsTotal() - 1; i >= 0; i--)
     {
-        if(PositionSelectByIndex(i))
+        ulong posTicket = PositionGetTicket(i);
+        if(posTicket > 0 && PositionSelectByTicket(posTicket))
         {
             if(PositionGetInteger(POSITION_MAGIC) == m_magicNumber)
             {
-                ulong ticket = PositionGetInteger(POSITION_TICKET);
-                if(!m_trade.PositionClose(ticket))
+                if(!m_trade.PositionClose(posTicket))
                 {
-                    Print("[TradeManager] Failed to close position " + IntegerToString(ticket));
+                    Print("[TradeManager] Failed to close position " + IntegerToString(posTicket));
                     allClosed = false;
                 }
                 else
                 {
-                    Print("[TradeManager] Closed position " + IntegerToString(ticket));
+                    Print("[TradeManager] Closed position " + IntegerToString(posTicket));
                 }
             }
         }
@@ -512,14 +512,14 @@ bool CTradeManager::CloseAllPositions(string reason)
     // Cancel all pending orders with our magic number
     for(int j = OrdersTotal() - 1; j >= 0; j--)
     {
-        if(OrderSelectByIndex(j))
+        ulong orderTicket = OrderGetTicket(j);
+        if(orderTicket > 0 && OrderSelect(orderTicket))
         {
             if(OrderGetInteger(ORDER_MAGIC) == m_magicNumber)
             {
-                ulong ticket = OrderGetInteger(ORDER_TICKET);
-                if(!m_trade.OrderDelete(ticket))
+                if(!m_trade.OrderDelete(orderTicket))
                 {
-                    Print("[TradeManager] Failed to delete order " + IntegerToString(ticket));
+                    Print("[TradeManager] Failed to delete order " + IntegerToString(orderTicket));
                     allClosed = false;
                 }
             }
@@ -544,12 +544,13 @@ void CTradeManager::UpdatePositionArray()
     
     for(int i = 0; i < PositionsTotal(); i++)
     {
-        if(PositionSelectByIndex(i))
+        ulong posTicket = PositionGetTicket(i);
+        if(posTicket > 0 && PositionSelectByTicket(posTicket))
         {
             if(PositionGetInteger(POSITION_MAGIC) == m_magicNumber)
             {
                 ActivePosition pos;
-                pos.ticket = PositionGetInteger(POSITION_TICKET);
+                pos.ticket = posTicket;
                 pos.symbol = PositionGetString(POSITION_SYMBOL);
                 pos.type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
                 pos.volume = PositionGetDouble(POSITION_VOLUME);
@@ -578,7 +579,8 @@ int CTradeManager::GetOpenTradesCount()
     int count = 0;
     for(int i = 0; i < PositionsTotal(); i++)
     {
-        if(PositionSelectByIndex(i))
+        ulong posTicket = PositionGetTicket(i);
+        if(posTicket > 0 && PositionSelectByTicket(posTicket))
         {
             if(PositionGetInteger(POSITION_MAGIC) == m_magicNumber)
             {

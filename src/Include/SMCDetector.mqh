@@ -149,6 +149,8 @@ public:
     double GetATR(int shift = 0);
     bool IsRejectionCandle(int shift);
     double CalculateRejectionStrength(int shift);
+    bool IsSwingLow(int shift);
+    bool IsSwingHigh(int shift);
 };
 
 //+------------------------------------------------------------------+
@@ -259,6 +261,7 @@ SMCAnalysis CSMCDetector::GetCurrentAnalysis()
     
     // Find the most recent valid order block
     OrderBlock bestOB;
+    ZeroMemory(bestOB); // Initialize structure
     bool foundValidOB = false;
     
     for(int i = ArraySize(m_orderBlocks) - 1; i >= 0; i--)
@@ -450,33 +453,196 @@ int CSMCDetector::CalculateOrderBlockStrength(const OrderBlock& ob)
 //+------------------------------------------------------------------+
 //| Helper function to check if bar is swing low                   |
 //+------------------------------------------------------------------+
-bool IsSwingLow(int shift)
+bool CSMCDetector::IsSwingLow(int shift)
 {
     if(shift < 2) return false;
     
-    double low = iLow(_Symbol, PERIOD_CURRENT, shift);
+    double low = iLow(m_symbol, PERIOD_CURRENT, shift);
     
     // Check if current low is lower than previous and next lows
-    return (low < iLow(_Symbol, PERIOD_CURRENT, shift-1) && 
-            low < iLow(_Symbol, PERIOD_CURRENT, shift+1) &&
-            low < iLow(_Symbol, PERIOD_CURRENT, shift-2) && 
-            low < iLow(_Symbol, PERIOD_CURRENT, shift+2));
+    return (low < iLow(m_symbol, PERIOD_CURRENT, shift-1) && 
+            low < iLow(m_symbol, PERIOD_CURRENT, shift+1) &&
+            low < iLow(m_symbol, PERIOD_CURRENT, shift-2) && 
+            low < iLow(m_symbol, PERIOD_CURRENT, shift+2));
 }
 
 //+------------------------------------------------------------------+
 //| Helper function to check if bar is swing high                  |
 //+------------------------------------------------------------------+
-bool IsSwingHigh(int shift)
+bool CSMCDetector::IsSwingHigh(int shift)
 {
     if(shift < 2) return false;
     
-    double high = iHigh(_Symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(m_symbol, PERIOD_CURRENT, shift);
     
     // Check if current high is higher than previous and next highs
-    return (high > iHigh(_Symbol, PERIOD_CURRENT, shift-1) && 
-            high > iHigh(_Symbol, PERIOD_CURRENT, shift+1) &&
-            high > iHigh(_Symbol, PERIOD_CURRENT, shift-2) && 
-            high > iHigh(_Symbol, PERIOD_CURRENT, shift+2));
+    return (high > iHigh(m_symbol, PERIOD_CURRENT, shift-1) && 
+            high > iHigh(m_symbol, PERIOD_CURRENT, shift+1) &&
+            high > iHigh(m_symbol, PERIOD_CURRENT, shift-2) && 
+            high > iHigh(m_symbol, PERIOD_CURRENT, shift+2));
+}
+
+//+------------------------------------------------------------------+
+//| Update swing points                                             |
+//+------------------------------------------------------------------+
+void CSMCDetector::UpdateSwingPoints()
+{
+    // This method will be implemented to track swing highs and lows
+    // For now, we'll use the IsSwingHigh and IsSwingLow methods directly
+}
+
+//+------------------------------------------------------------------+
+//| Get ATR value                                                   |
+//+------------------------------------------------------------------+
+double CSMCDetector::GetATR(int shift = 0)
+{
+    if(ArraySize(m_atr) > shift)
+    {
+        return m_atr[shift];
+    }
+    return 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| Check if candle shows rejection                                 |
+//+------------------------------------------------------------------+
+bool CSMCDetector::IsRejectionCandle(int shift)
+{
+    double open = iOpen(m_symbol, PERIOD_CURRENT, shift);
+    double close = iClose(m_symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(m_symbol, PERIOD_CURRENT, shift);
+    double low = iLow(m_symbol, PERIOD_CURRENT, shift);
+    
+    double bodySize = MathAbs(close - open);
+    double upperWick = high - MathMax(open, close);
+    double lowerWick = MathMin(open, close) - low;
+    double totalRange = high - low;
+    
+    if(totalRange == 0) return false;
+    
+    // Check for significant rejection (wick > 60% of total range)
+    return (upperWick > totalRange * 0.6 || lowerWick > totalRange * 0.6);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate rejection strength                                    |
+//+------------------------------------------------------------------+
+double CSMCDetector::CalculateRejectionStrength(int shift)
+{
+    double open = iOpen(m_symbol, PERIOD_CURRENT, shift);
+    double close = iClose(m_symbol, PERIOD_CURRENT, shift);
+    double high = iHigh(m_symbol, PERIOD_CURRENT, shift);
+    double low = iLow(m_symbol, PERIOD_CURRENT, shift);
+    
+    double bodySize = MathAbs(close - open);
+    double upperWick = high - MathMax(open, close);
+    double lowerWick = MathMin(open, close) - low;
+    double totalRange = high - low;
+    
+    if(totalRange == 0) return 0.0;
+    
+    // Return the percentage of the larger wick
+    double maxWick = MathMax(upperWick, lowerWick);
+    return maxWick / totalRange;
+}
+
+//+------------------------------------------------------------------+
+//| Detect Fair Value Gaps                                         |
+//+------------------------------------------------------------------+
+bool CSMCDetector::DetectFairValueGaps()
+{
+    // Implementation for FVG detection
+    // This is a placeholder - full implementation would analyze 3-candle patterns
+    return true;
+}
+
+//+------------------------------------------------------------------+
+//| Check if FVG is valid                                          |
+//+------------------------------------------------------------------+
+bool CSMCDetector::IsFVGValid(const FairValueGap& fvg)
+{
+    return !fvg.is_filled && (fvg.gap_high - fvg.gap_low) >= m_fvgMinSize * SymbolInfoDouble(m_symbol, SYMBOL_POINT);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate FVG fill percentage                                   |
+//+------------------------------------------------------------------+
+double CSMCDetector::CalculateFVGFillPercentage(const FairValueGap& fvg)
+{
+    // Implementation for calculating how much of the FVG has been filled
+    return 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| Analyze market structure                                        |
+//+------------------------------------------------------------------+
+bool CSMCDetector::AnalyzeMarketStructure()
+{
+    // Implementation for market structure analysis
+    return DetectBreakOfStructure() || DetectChangeOfCharacter();
+}
+
+//+------------------------------------------------------------------+
+//| Detect Break of Structure                                       |
+//+------------------------------------------------------------------+
+bool CSMCDetector::DetectBreakOfStructure()
+{
+    // Implementation for BOS detection
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Detect Change of Character                                      |
+//+------------------------------------------------------------------+
+bool CSMCDetector::DetectChangeOfCharacter()
+{
+    // Implementation for CHOCH detection
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Detect liquidity grab                                           |
+//+------------------------------------------------------------------+
+bool CSMCDetector::DetectLiquidityGrab()
+{
+    // Implementation for liquidity grab detection
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Detect inducement                                               |
+//+------------------------------------------------------------------+
+bool CSMCDetector::DetectInducement()
+{
+    // Implementation for inducement detection
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check Fibonacci alignment                                       |
+//+------------------------------------------------------------------+
+bool CSMCDetector::CheckFibonacciAlignment(double price)
+{
+    // Implementation for Fibonacci level alignment
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check volume confirmation                                       |
+//+------------------------------------------------------------------+
+bool CSMCDetector::CheckVolumeConfirmation()
+{
+    // Implementation for volume confirmation
+    return false;
+}
+
+//+------------------------------------------------------------------+
+//| Check multi-timeframe alignment                                |
+//+------------------------------------------------------------------+
+bool CSMCDetector::CheckMultiTimeframeAlignment()
+{
+    // Implementation for multi-timeframe analysis
+    return false;
 }
 
 //--- Additional SMC detection methods will be implemented

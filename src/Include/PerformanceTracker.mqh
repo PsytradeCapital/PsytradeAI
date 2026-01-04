@@ -132,6 +132,8 @@ private:
     double m_returns[];
     double m_dailyReturns[];
     double m_monthlyReturns[];
+    double m_drawdownHistory[];
+    int m_maxTradeRecords;
     
 public:
     CPerformanceTracker();
@@ -141,6 +143,7 @@ public:
     bool Initialize();
     void SetConfiguration(bool trackMAE_MFE, bool advancedMetrics, int maxRecords);
     void SetRiskFreeRate(double rate) { m_riskFreeRate = rate; }
+    void LoadTradeHistoryFromAccount();
     
     // Trade recording
     void RecordTrade(const TradeRecord& trade);
@@ -208,6 +211,7 @@ CPerformanceTracker::CPerformanceTracker()
     m_trackMAE_MFE = true;
     m_calculateAdvancedMetrics = true;
     m_maxHistoryRecords = 10000;
+    m_maxTradeRecords = 10000;
     m_riskFreeRate = 0.02; // 2% annual risk-free rate
     
     m_startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -246,6 +250,65 @@ bool CPerformanceTracker::Initialize()
     CalculateMetrics();
     
     return true;
+}
+
+//+------------------------------------------------------------------+
+//| Load trade history from account                                 |
+//+------------------------------------------------------------------+
+void CPerformanceTracker::LoadTradeHistoryFromAccount()
+{
+    // Load recent trade history from account
+    int totalDeals = HistoryDealsTotal();
+    int maxDealsToLoad = MathMin(totalDeals, 1000); // Load last 1000 deals
+    
+    for(int deal_i = totalDeals - maxDealsToLoad; deal_i < totalDeals; deal_i++)
+    {
+        ulong ticket = HistoryDealGetTicket(deal_i);
+        if(ticket > 0)
+        {
+            // Check if it's a trade deal (not deposit/withdrawal)
+            ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(ticket, DEAL_TYPE);
+            if(dealType == DEAL_TYPE_BUY || dealType == DEAL_TYPE_SELL)
+            {
+                // Record this trade
+                RecordTradeFromHistory(ticket);
+            }
+        }
+    }
+    
+    Print("[PerformanceTracker] Loaded " + IntegerToString(maxDealsToLoad) + " historical deals");
+}
+
+//+------------------------------------------------------------------+
+//| Record trade from history                                       |
+//+------------------------------------------------------------------+
+void CPerformanceTracker::RecordTradeFromHistory(ulong ticket)
+{
+    // Get deal information
+    if(!HistoryDealSelect(ticket))
+        return;
+    
+    TradeRecord trade;
+    trade.open_time = (datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+    trade.close_time = trade.open_time; // For deals, open and close time are same
+    trade.symbol = HistoryDealGetString(ticket, DEAL_SYMBOL);
+    trade.order_type = (ENUM_ORDER_TYPE)HistoryDealGetInteger(ticket, DEAL_TYPE);
+    trade.volume = HistoryDealGetDouble(ticket, DEAL_VOLUME);
+    trade.open_price = HistoryDealGetDouble(ticket, DEAL_PRICE);
+    trade.close_price = trade.open_price;
+    trade.profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+    trade.commission = HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+    trade.swap = HistoryDealGetDouble(ticket, DEAL_SWAP);
+    trade.comment = HistoryDealGetString(ticket, DEAL_COMMENT);
+    trade.mae = 0; // Cannot calculate from history
+    trade.mfe = 0; // Cannot calculate from history
+    trade.duration_minutes = 0;
+    trade.risk_reward_ratio = 0;
+    
+    // Add to history without recalculating metrics (done in batch)
+    int size = ArraySize(m_tradeHistory);
+    ArrayResize(m_tradeHistory, size + 1);
+    m_tradeHistory[size] = trade;
 }
 
 //+------------------------------------------------------------------+
@@ -569,3 +632,232 @@ string CPerformanceTracker::GetPerformanceGrade()
 }
 
 //--- Additional performance tracking methods continue...
+
+//+------------------------------------------------------------------+
+//| Initialize arrays                                               |
+//+------------------------------------------------------------------+
+void CPerformanceTracker::InitializeArrays()
+{
+    ArrayResize(m_tradeHistory, 0);
+    ArrayResize(m_dailyReturns, 0);
+    ArrayResize(m_monthlyReturns, 0);
+    ArrayResize(m_drawdownHistory, 0);
+    ArrayResize(m_returns, 0);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate standard deviation                                    |
+//+------------------------------------------------------------------+
+double CPerformanceTracker::CalculateStandardDeviation(const double& values[])
+{
+    int size = ArraySize(values);
+    if(size < 2) return 0.0;
+    
+    // Calculate mean
+    double sum = 0.0;
+    int val_i;
+    for(val_i = 0; val_i < size; val_i++)
+    {
+        sum += values[val_i];
+    }
+    double mean = sum / size;
+    
+    // Calculate variance
+    double variance = 0.0;
+    for(val_i = 0; val_i < size; val_i++)
+    {
+        double diff = values[val_i] - mean;
+        variance += diff * diff;
+    }
+    variance /= (size - 1);
+    
+    return MathSqrt(variance);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate downside deviation                                    |
+//+------------------------------------------------------------------+
+double CPerformanceTracker::CalculateDownsideDeviation(const double& values[])
+{
+    int size = ArraySize(values);
+    if(size < 2) return 0.0;
+    
+    double target = 0.0; // Target return (0% for downside deviation)
+    double sum = 0.0;
+    int count = 0;
+    
+    int down_i;
+    for(down_i = 0; down_i < size; down_i++)
+    {
+        if(values[down_i] < target)
+        {
+            double diff = values[down_i] - target;
+            sum += diff * diff;
+            count++;
+        }
+    }
+    
+    if(count < 2) return 0.0;
+    
+    return MathSqrt(sum / count);
+}
+
+//+------------------------------------------------------------------+
+//| Update returns arrays                                           |
+//+------------------------------------------------------------------+
+void CPerformanceTracker::UpdateReturnsArrays()
+{
+    // Calculate daily return
+    double currentBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    if(m_currentBalance > 0)
+    {
+        double dailyReturn = (currentBalance - m_currentBalance) / m_currentBalance * 100.0;
+        
+        // Add to daily returns array
+        int size = ArraySize(m_dailyReturns);
+        ArrayResize(m_dailyReturns, size + 1);
+        m_dailyReturns[size] = dailyReturn;
+        
+        // Keep only last 252 days (1 trading year)
+        if(size > 252)
+        {
+            // Manual shift of array elements
+            for(int shift_i = 0; shift_i < size - 1; shift_i++)
+            {
+                m_dailyReturns[shift_i] = m_dailyReturns[shift_i + 1];
+            }
+            ArrayResize(m_dailyReturns, size - 1);
+        }
+    }
+    
+    m_currentBalance = currentBalance;
+}
+
+//+------------------------------------------------------------------+
+//| Get daily risk-free rate                                       |
+//+------------------------------------------------------------------+
+double CPerformanceTracker::GetRiskFreeRateDaily()
+{
+    return m_riskFreeRate / 252.0; // Convert annual rate to daily
+}
+
+//+------------------------------------------------------------------+
+//| Sort trades by profit                                           |
+//+------------------------------------------------------------------+
+void CPerformanceTracker::SortTradesByProfit(TradeRecord& trades[])
+{
+    int size = ArraySize(trades);
+    if(size < 2) return;
+    
+    // Simple bubble sort for profit values
+    int sort_i, sort_j;
+    for(sort_i = 0; sort_i < size - 1; sort_i++)
+    {
+        for(sort_j = 0; sort_j < size - sort_i - 1; sort_j++)
+        {
+            if(trades[sort_j].profit > trades[sort_j + 1].profit)
+            {
+                // Swap trades
+                TradeRecord temp = trades[sort_j];
+                trades[sort_j] = trades[sort_j + 1];
+                trades[sort_j + 1] = temp;
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Value at Risk                                         |
+//+------------------------------------------------------------------+
+double CPerformanceTracker::CalculateVaR(double confidence)
+{
+    int size = ArraySize(m_dailyReturns);
+    if(size < 30) return 0.0; // Need at least 30 days
+    
+    // Copy returns for sorting
+    double returns[];
+    ArrayResize(returns, size);
+    for(int copy_i = 0; copy_i < size; copy_i++)
+    {
+        returns[copy_i] = m_dailyReturns[copy_i];
+    }
+    
+    // Sort returns (ascending)
+    ArraySort(returns);
+    
+    // Calculate VaR at confidence level
+    int index = (int)((1.0 - confidence) * size);
+    if(index >= size) index = size - 1;
+    if(index < 0) index = 0;
+    
+    return MathAbs(returns[index]);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Conditional Value at Risk                             |
+//+------------------------------------------------------------------+
+double CPerformanceTracker::CalculateCVaR(double confidence)
+{
+    int size = ArraySize(m_dailyReturns);
+    if(size < 30) return 0.0;
+    
+    // Copy returns for sorting
+    double returns[];
+    ArrayResize(returns, size);
+    for(int copy_i = 0; copy_i < size; copy_i++)
+    {
+        returns[copy_i] = m_dailyReturns[copy_i];
+    }
+    
+    // Sort returns (ascending)
+    ArraySort(returns);
+    
+    // Calculate CVaR (average of worst returns beyond VaR)
+    int varIndex = (int)((1.0 - confidence) * size);
+    if(varIndex >= size) varIndex = size - 1;
+    
+    double sum = 0.0;
+    int count = 0;
+    int cvar_i;
+    for(cvar_i = 0; cvar_i <= varIndex; cvar_i++)
+    {
+        sum += returns[cvar_i];
+        count++;
+    }
+    
+    return count > 0 ? MathAbs(sum / count) : 0.0;
+}
+
+//+------------------------------------------------------------------+
+//| Cleanup old records                                             |
+//+------------------------------------------------------------------+
+void CPerformanceTracker::CleanupOldRecords()
+{
+    int maxRecords = m_maxTradeRecords;
+    int currentSize = ArraySize(m_tradeHistory);
+    
+    if(currentSize > maxRecords)
+    {
+        // Keep only the most recent records
+        int recordsToKeep = maxRecords;
+        int startIndex = currentSize - recordsToKeep;
+        
+        TradeRecord tempArray[];
+        ArrayResize(tempArray, recordsToKeep);
+        
+        int temp_i;
+        for(temp_i = 0; temp_i < recordsToKeep; temp_i++)
+        {
+            tempArray[temp_i] = m_tradeHistory[startIndex + temp_i];
+        }
+        
+        // Manual copy instead of ArrayCopy for structures
+        ArrayResize(m_tradeHistory, recordsToKeep);
+        for(temp_i = 0; temp_i < recordsToKeep; temp_i++)
+        {
+            m_tradeHistory[temp_i] = tempArray[temp_i];
+        }
+        
+        Print("[PerformanceTracker] Cleaned up old records, keeping " + IntegerToString(recordsToKeep) + " most recent");
+    }
+}
